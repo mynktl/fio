@@ -20,6 +20,7 @@ all:
 include config-host.mak
 endif
 
+CONFIG_ZFS:= YES
 DEBUGFLAGS = -DFIO_INC_DEBUG
 CPPFLAGS= -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64 -DFIO_INTERNAL $(DEBUGFLAGS)
 OPTFLAGS= -g -ffast-math
@@ -29,7 +30,7 @@ PROGS	= fio
 SCRIPTS = $(addprefix $(SRCDIR)/,tools/fio_generate_plots tools/plot/fio2gnuplot tools/genfio tools/fiologparser.py tools/hist/fiologparser_hist.py)
 
 ifndef CONFIG_FIO_NO_OPT
-  CFLAGS += -O3 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=2
+  CFLAGS += -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=2
 endif
 
 ifdef CONFIG_GFIO
@@ -48,6 +49,14 @@ SOURCE :=	$(sort $(patsubst $(SRCDIR)/%,%,$(wildcard $(SRCDIR)/crc/*.c)) \
 		profiles/tiobench.c profiles/act.c io_u_queue.c filelock.c \
 		workqueue.c rate-submit.c optgroup.c helper_thread.c \
 		steadystate.c
+
+ifdef CONFIG_ZFS
+  ZFSFLAGS= -I/usr/include/libzfs -I/usr/include/libspl
+  ZFSLIB= -lzfs -lzpool -lnvpair -luutil
+  CFLAGS += $(ZFSFLAGS)
+  LIBS += $(ZFSLIB)
+  SOURCE += engines/dmu.c
+endif
 
 ifdef CONFIG_LIBHDFS
   HDFSFLAGS= -I $(JAVA_HOME)/include -I $(JAVA_HOME)/include/linux -I $(FIO_LIBHDFS_INCLUDE)

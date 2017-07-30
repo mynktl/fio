@@ -854,15 +854,6 @@ static int __handle_option(struct fio_option *o, const char *ptr, void *data,
 	if (ret)
 		return ret;
 
-	if (o->verify) {
-		ret = o->verify(o, data);
-		if (ret) {
-			log_err("Correct format for offending option\n");
-			log_err("%20s: %s\n", o->name, o->help);
-			show_option_help(o, 1);
-		}
-	}
-
 	return ret;
 }
 
