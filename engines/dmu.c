@@ -1,7 +1,6 @@
 #include "../fio.h"
 #include "../optgroup.h"
 #include <ctype.h>
-#include <libzfs/libzfs.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/dmu.h>
@@ -20,14 +19,17 @@
 #include <sys/zfs_znode.h>
 #include <sys/zio_checksum.h>
 #include <sys/zio_compress.h>
+#include <libzfs.h>
+
+const char *hold_tag = "fio_hold_tag";
+#define HOLD_TAG	((void *) hold_tag)
 
 pthread_mutex_t init_mutex = PTHREAD_MUTEX_INITIALIZER;
 static int initialized = 0;
 objset_t *os;
-libzfs_handle_t *g_zfs;
 spa_t *spa;
-char *g_name;
-static importargs_t g_importargs;
+char poolname[MAXPATHLEN];
+int imported;
 struct dmu_opts {
     void *pad;
     char *pool;
@@ -41,8 +43,9 @@ fatal(spa_t *spa, void *tag, const char *fmt, ...) {
 
     if (spa != NULL) {
         spa_close(spa, tag);
-        (void)spa_export(g_name, NULL, B_TRUE, B_FALSE);
     }
+    if (imported)
+        (void)spa_export(poolname, NULL, B_TRUE, B_FALSE);
 
     va_start(ap, fmt);
     (void)vfprintf(stderr, fmt, ap);
@@ -54,33 +57,64 @@ fatal(spa_t *spa, void *tag, const char *fmt, ...) {
 
 static void
 pool_import(char *target, boolean_t readonly) {
-    nvlist_t *config = NULL;
-    nvlist_t *props = NULL;
+    nvlist_t *pools;
+    nvlist_t *config;
+    nvlist_t *props = fnvlist_alloc();
+    nvpair_t *elem;
+    libzfs_handle_t *hdl;
     int error;
 
     kernel_init(readonly ? FREAD : (FREAD | FWRITE));
-    g_zfs = libzfs_init();
-    ASSERT(g_zfs != NULL);
 
+    /* this should be put to nvlist props
     g_importargs.unique = B_TRUE;
     g_importargs.can_be_active = readonly;
+    fnvlist_add_uint64(props, xxx, readonly);
+    fnvlist_add_uint64(props, xxx, yyy);
+    */
+    hdl = libzfs_init();
+    pools = zpool_find_import_cached(hdl, ZPOOL_CACHE, target, 0);
 
+    if (pools == NULL) {
+	if (libzfs_errno(hdl) != 0) {
+		fatal(NULL, HOLD_TAG, "can't import '%s': %s",
+		    target, libzfs_error_description(hdl));
+        } else {
+		fatal(NULL, HOLD_TAG, "can't import '%s': no such pool",
+		    target);
+	}
+    }
+
+    /* In theory there can be multiple matching pools. We take the first one */
+    elem = nvlist_next_nvpair(pools, NULL);
+    if (elem == NULL)
+        fatal(NULL, HOLD_TAG, "can't import '%s': no such pool", target);
+    if (nvpair_value_nvlist(elem, &config) != 0)
+        fatal(NULL, HOLD_TAG, "can't import '%s': error getting nvlist element",
+	    target);
+
+    nvlist_print(stderr, config);
     error = spa_import(target, config, props, ZFS_IMPORT_NORMAL);
-    if (error == EEXIST)
-        error = 0;
 
-    if (error)
-        fatal(NULL, FTAG, "can't import '%s': %s", target, strerror(error));
+    nvlist_free(pools);
+    nvlist_free(props);
+    libzfs_fini(hdl);
+    if (error && error != EEXIST)
+        fatal(NULL, HOLD_TAG, "can't import '%s': %s", target, strerror(error));
+
+    imported = 1;
 }
 
-static void
-user_spa_open(char *target, boolean_t readonly, void *tag, spa_t **spa) {
+static spa_t *
+user_spa_open(char *target, boolean_t readonly, void *tag) {
     int err;
+    spa_t *spa = NULL;
 
     pool_import(target, readonly);
-    err = spa_open(target, spa, tag);
+    err = spa_open(target, &spa, tag);
     if (err != 0)
-        fatal(*spa, FTAG, "cannot open '%s': %s", target, strerror(err));
+        fatal(NULL, HOLD_TAG, "cannot open '%s': %s", target, strerror(err));
+    return spa;
 }
 
 static int
@@ -132,39 +166,45 @@ pthread_t tid;
 static int
 fio_dmu_init(struct thread_data *td) {
     int error = 0;
+    struct dmu_opts *opts = td->eo;
+    char *dsname, *c;
 
-    /*  when we run multiple process we need to prevent
-     *  multiple pool imports
+    /*
+     * when we run multiple process we need to prevent
+     * multiple pool imports
      */
-
     pthread_mutex_lock(&init_mutex);
-    if (initialized == 1) {
+    if (initialized != 0) {
         printf("TID %d\n", td->thread_number);
         pthread_mutex_unlock(&init_mutex);
         return 0;
-    } else {
-        struct dmu_opts *opts = td->eo;
-        if (opts->pool) {
-            g_name = opts->pool;
-        } else {
-            exit(1);
-        }
-
-        user_spa_open(g_name, B_FALSE, FTAG, &spa);
-        spa->spa_debug = 1;
-        if ((error = dmu_objset_own(g_name, DMU_OST_ZVOL, B_FALSE, (void *)1,
-                                    &os)) != 0) {
-            dmu_objset_disown(os, (void *)1);
-            pthread_mutex_unlock(&init_mutex);
-            return 1;
-        }
-        initialized = 1;
-        stats_thread =
-            zk_thread_create(NULL, 0, (thread_func_t)print_stats, NULL, 0, NULL,
-                             TS_RUN, 0, PTHREAD_CREATE_JOINABLE);
-        tid = stats_thread->t_tid;
-        pthread_mutex_unlock(&init_mutex);
     }
+
+    if (!opts->pool) {
+        fprintf(stderr, "No zfs pool name\n");
+        exit(1);
+    }
+
+    dsname = opts->pool;
+    strncpy(poolname, dsname, sizeof(poolname));
+    c = strchr(poolname, '/');
+    if (c != NULL)
+	    *c = '\0';
+
+    spa = user_spa_open(poolname, B_FALSE, HOLD_TAG);
+    spa->spa_debug = 1;
+    if ((error = dmu_objset_own(dsname, DMU_OST_ZVOL, B_FALSE, HOLD_TAG,
+                                &os)) != 0) {
+        dmu_objset_disown(os, HOLD_TAG);
+        pthread_mutex_unlock(&init_mutex);
+        return 1;
+    }
+    initialized = 1;
+    stats_thread =
+        zk_thread_create(NULL, 0, (thread_func_t)print_stats, NULL, 0, NULL,
+                         TS_RUN, 0, PTHREAD_CREATE_JOINABLE);
+    tid = stats_thread->t_tid;
+    pthread_mutex_unlock(&init_mutex);
 
     printf("Pool imported!\n");
     return 0;
@@ -188,9 +228,8 @@ fio_dmu_open(struct thread_data *td, struct fio_file *f) {
 static int
 fio_dmu_close(struct thread_data *td, struct fio_file *f) {
     zk_thread_join(tid);
-    dmu_objset_disown(os, (void *)1);
-    spa_close(spa, FTAG);
-    libzfs_fini(g_zfs);
+    dmu_objset_disown(os, HOLD_TAG);
+    spa_close(spa, HOLD_TAG);
     kernel_fini();
     return 0;
 }

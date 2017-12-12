@@ -51,8 +51,14 @@ SOURCE :=	$(sort $(patsubst $(SRCDIR)/%,%,$(wildcard $(SRCDIR)/crc/*.c)) \
 		steadystate.c
 
 ifdef CONFIG_ZFS
-  ZFSFLAGS= -I/usr/include/libzfs -I/usr/include/libspl
-  ZFSLIB= -lzfs -lzpool -lnvpair -luutil
+ifdef ZFSONLINUX
+  ZFSFLAGS += -I$(ZFSONLINUX)/include -I$(ZFSONLINUX)/lib/libspl/include
+  ZFSLIB += -L$(ZFSONLINUX)/lib/libnvpair/.libs -L$(ZFSONLINUX)/lib/libuutil/.libs -L$(ZFSONLINUX)/lib/libzpool/.libs -L$(ZFSONLINUX)/lib/libzfs/.libs -L$(ZFSONLINUX)/lib/libzfs_core/.libs
+  ZFSLIB += -Wl,-rpath,"$(ZFSONLINUX)/lib/libnvpair/.libs" -Wl,-rpath,"$(ZFSONLINUX)/lib/libuutil/.libs" -Wl,-rpath,"$(ZFSONLINUX)/lib/libzpool/.libs" -Wl,-rpath,"$(ZFSONLINUX)/lib/libzfs/.libs" -Wl,-rpath,"$(ZFSONLINUX)/lib/libzfs_core/.libs"
+else
+  ZFSFLAGS += -I/usr/include/libzfs -I/usr/include/libspl
+endif
+  ZFSLIB += -lzfs -lzpool -lnvpair -luutil
   CFLAGS += $(ZFSFLAGS)
   LIBS += $(ZFSLIB)
   SOURCE += engines/dmu.c

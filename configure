@@ -134,6 +134,7 @@ output_sym() {
 
 targetos=""
 cpu=""
+zfsonlinux=""
 
 # default options
 show_help="no"
@@ -192,6 +193,8 @@ for opt do
   ;;
   --enable-cuda) enable_cuda="yes"
   ;;
+  --with-zfs=*) zfsonlinux="$optarg"
+  ;;
   --help)
     show_help="yes"
     ;;
@@ -221,6 +224,7 @@ if test "$show_help" = "yes" ; then
   echo "--disable-shm           Disable SHM support"
   echo "--disable-optimizations Don't enable compiler optimizations"
   echo "--enable-cuda           Enable GPUDirect RDMA support"
+  echo "--with-zfs              Path to zfs-on-linux repo (for dmu engine)"
   exit $exit_val
 fi
 
@@ -344,6 +348,13 @@ CYGWIN*)
   echo "BUILD_CFLAGS=$CFLAGS -I../zlib -include config-host.h -D_GNU_SOURCE" >> $config_host_mak
   ;;
 esac
+
+if test ! -z "$zfsonlinux" ; then
+  if test ! -d "$zfsonlinux"; then
+    fatal "Invalid path to zfs-on-linux repo"
+  fi
+  echo "ZFSONLINUX=$zfsonlinux" >> $config_host_mak
+fi
 
 if test ! -z "$cpu" ; then
   # command line argument
