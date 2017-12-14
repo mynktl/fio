@@ -14,7 +14,6 @@
 #include <sys/spa_impl.h>
 #include <sys/vdev.h>
 #include <sys/zap.h>
-#include <sys/zfeature.h>
 #include <sys/zfs_context.h>
 #include <sys/zfs_znode.h>
 #include <sys/zio_checksum.h>
@@ -34,6 +33,9 @@ struct dmu_opts {
     void *pad;
     char *pool;
 };
+
+static importargs_t g_importargs = {0};
+libzfs_handle_t *g_zfs;
 
 #define ZVOL_OBJ 1ULL
 
@@ -57,52 +59,43 @@ fatal(spa_t *spa, void *tag, const char *fmt, ...) {
 
 static void
 pool_import(char *target, boolean_t readonly) {
-    nvlist_t *pools;
-    nvlist_t *config;
-    nvlist_t *props = fnvlist_alloc();
-    nvpair_t *elem;
-    libzfs_handle_t *hdl;
-    int error;
 
-    kernel_init(readonly ? FREAD : (FREAD | FWRITE));
+	nvlist_t *config;
+        nvlist_t *props;
+        int error;
 
-    /* this should be put to nvlist props
-    g_importargs.unique = B_TRUE;
-    g_importargs.can_be_active = readonly;
-    fnvlist_add_uint64(props, xxx, readonly);
-    fnvlist_add_uint64(props, xxx, yyy);
-    */
-    hdl = libzfs_init();
-    pools = zpool_find_import_cached(hdl, ZPOOL_CACHE, target, 0);
+        kernel_init(readonly ? FREAD : (FREAD | FWRITE));
+        g_zfs = libzfs_init();
+        ASSERT(g_zfs != NULL);
 
-    if (pools == NULL) {
-	if (libzfs_errno(hdl) != 0) {
-		fatal(NULL, HOLD_TAG, "can't import '%s': %s",
-		    target, libzfs_error_description(hdl));
-        } else {
-		fatal(NULL, HOLD_TAG, "can't import '%s': no such pool",
-		    target);
-	}
-    }
+	/* making unique true will require scanning
+	 * of the namespace avl
+	 */
 
-    /* In theory there can be multiple matching pools. We take the first one */
-    elem = nvlist_next_nvpair(pools, NULL);
-    if (elem == NULL)
-        fatal(NULL, HOLD_TAG, "can't import '%s': no such pool", target);
-    if (nvpair_value_nvlist(elem, &config) != 0)
-        fatal(NULL, HOLD_TAG, "can't import '%s': error getting nvlist element",
-	    target);
+        g_importargs.unique = B_FALSE;
+        g_importargs.can_be_active = B_TRUE;
 
-    nvlist_print(stderr, config);
-    error = spa_import(target, config, props, ZFS_IMPORT_NORMAL);
+        error = zpool_tryimport(g_zfs, target, &config, &g_importargs);
+        if (error)
+                fatal(NULL, FTAG, "cannot import '%s': %s", target,
+                    libzfs_error_description(g_zfs));
 
-    nvlist_free(pools);
-    nvlist_free(props);
-    libzfs_fini(hdl);
-    if (error && error != EEXIST)
-        fatal(NULL, HOLD_TAG, "can't import '%s': %s", target, strerror(error));
+        props = NULL;
+        if (readonly) {
+                VERIFY(nvlist_alloc(&props, NV_UNIQUE_NAME, 0) == 0);
+                VERIFY(nvlist_add_uint64(props,
+                    zpool_prop_to_name(ZPOOL_PROP_READONLY), 1) == 0);
+        }
 
-    imported = 1;
+        error = spa_import(target, config, props,
+            (readonly ?  ZFS_IMPORT_SKIP_MMP : ZFS_IMPORT_NORMAL));
+        if (error == EEXIST)
+                error = 0;
+
+        if (error)
+                fatal(NULL, FTAG, "can't import '%s': %s", target,
+                    strerror(error));
+
 }
 
 static spa_t *
@@ -186,19 +179,21 @@ fio_dmu_init(struct thread_data *td) {
     }
 
     dsname = opts->pool;
+
     strncpy(poolname, dsname, sizeof(poolname));
     c = strchr(poolname, '/');
     if (c != NULL)
 	    *c = '\0';
-
     spa = user_spa_open(poolname, B_FALSE, HOLD_TAG);
     spa->spa_debug = 1;
+    
     if ((error = dmu_objset_own(dsname, DMU_OST_ZVOL, B_FALSE, HOLD_TAG,
                                 &os)) != 0) {
-        dmu_objset_disown(os, HOLD_TAG);
+	printf("No dataset with name %s\n", dsname);
         pthread_mutex_unlock(&init_mutex);
         return 1;
     }
+
     initialized = 1;
     stats_thread =
         zk_thread_create(NULL, 0, (thread_func_t)print_stats, NULL, 0, NULL,
