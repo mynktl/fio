@@ -18,6 +18,7 @@
 #include <sys/zfs_znode.h>
 #include <sys/zio_checksum.h>
 #include <sys/zio_compress.h>
+#include <sys/kstat.h>
 #include <libzfs.h>
 
 const char *hold_tag = "fio_hold_tag";
@@ -32,6 +33,7 @@ int imported;
 struct dmu_opts {
     void *pad;
     char *pool;
+    unsigned int kstats;
 };
 
 static importargs_t g_importargs = {0};
@@ -206,7 +208,8 @@ fio_dmu_init(struct thread_data *td) {
 }
 
 static void
-fio_dmu_cleanup(struct thread_data *td) {}
+fio_dmu_cleanup(struct thread_data *td) {
+}
 
 static int
 fio_dmu_open(struct thread_data *td, struct fio_file *f) {
@@ -222,19 +225,41 @@ fio_dmu_open(struct thread_data *td, struct fio_file *f) {
 
 static int
 fio_dmu_close(struct thread_data *td, struct fio_file *f) {
+    struct dmu_opts *opts = td->eo;
+
     zk_thread_join(tid);
-    dmu_objset_disown(os, HOLD_TAG);
-    spa_close(spa, HOLD_TAG);
-    kernel_fini();
+
+    if (initialized != 0) {
+         if (opts->kstats != 0) {
+             kstat_dump_all();
+         }
+         dmu_objset_disown(os, HOLD_TAG);
+         spa_close(spa, HOLD_TAG);
+         kernel_fini();
+         initialized = 0;
+    }
     return 0;
 }
 
 struct fio_option options[] = {{
                                    .name = "zvol",
+                                   .lname = "zvol to use for IO test",
                                    .type = FIO_OPT_STR_STORE,
                                    .def = NULL,
                                    .help = "selected pool",
                                    .off1 = offsetof(struct dmu_opts, pool),
+                                   .category = FIO_OPT_C_ENGINE,
+                                   .group = FIO_OPT_G_INVALID,
+                               },
+                               {
+                                   .name = "kstats",
+                                   .lname = "Print kstats when jobs finish",
+                                   .type = FIO_OPT_BOOL,
+                                   .def = "0",
+                                   .help = "Print kstats when jobs finish",
+                                   .off1 = offsetof(struct dmu_opts, kstats),
+                                   .category = FIO_OPT_C_ENGINE,
+                                   .group = FIO_OPT_G_INVALID,
                                },
                                {
                                    .name = NULL,
