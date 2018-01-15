@@ -27,6 +27,7 @@
 
 #include "fio.h"
 #include "smalloc.h"
+#include "sys/zfs_context.h"
 
 int main(int argc, char *argv[], char *envp[])
 {
@@ -40,6 +41,8 @@ int main(int argc, char *argv[], char *envp[])
 #if !defined(CONFIG_GETTIMEOFDAY) && !defined(CONFIG_CLOCK_GETTIME)
 #error "No available clock source!"
 #endif
+
+	kernel_init(FREAD | FWRITE);
 
 	if (fio_server_create_sk_key())
 		goto done;
@@ -64,6 +67,7 @@ int main(int argc, char *argv[], char *envp[])
 	} else
 		ret = fio_backend(NULL);
 
+	kernel_fini();
 done_key:
 	fio_server_destroy_sk_key();
 done:

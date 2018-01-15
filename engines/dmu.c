@@ -25,17 +25,21 @@ const char *hold_tag = "fio_hold_tag";
 #define HOLD_TAG	((void *) hold_tag)
 
 pthread_mutex_t init_mutex = PTHREAD_MUTEX_INITIALIZER;
-static int initialized = 0;
-objset_t *os;
-spa_t *spa;
-char poolname[MAXPATHLEN];
-int imported;
+static int initialized_spa[10] = { 0 };
+static int initialized_os[10] = { 0 };
+objset_t *os[10] = { NULL };
+spa_t *spa[10] = { NULL } ;
 struct dmu_opts {
     void *pad;
     char *pool;
     unsigned int kstats;
 };
 
+struct dmu_data {
+    int spa_index;
+    int os_index;
+};
+ 
 static importargs_t g_importargs = {0};
 libzfs_handle_t *g_zfs;
 
@@ -48,8 +52,6 @@ fatal(spa_t *spa, void *tag, const char *fmt, ...) {
     if (spa != NULL) {
         spa_close(spa, tag);
     }
-    if (imported)
-        (void)spa_export(poolname, NULL, B_TRUE, B_FALSE);
 
     va_start(ap, fmt);
     (void)vfprintf(stderr, fmt, ap);
@@ -66,7 +68,6 @@ pool_import(char *target, boolean_t readonly) {
         nvlist_t *props;
         int error;
 
-        kernel_init(readonly ? FREAD : (FREAD | FWRITE));
         g_zfs = libzfs_init();
         ASSERT(g_zfs != NULL);
 
@@ -115,8 +116,9 @@ user_spa_open(char *target, boolean_t readonly, void *tag) {
 static int
 fio_dmu_queue(struct thread_data *td, struct io_u *io_u) {
     int error;
+    int os_index = (int)((struct dmu_data *)(td->io_ops_data))->os_index;
     if (io_u->ddir == DDIR_WRITE) {
-        dmu_tx_t *tx = dmu_tx_create(os);
+        dmu_tx_t *tx = dmu_tx_create(os[os_index]);
         dmu_tx_hold_write(tx, ZVOL_OBJ, io_u->offset, io_u->xfer_buflen);
         error = dmu_tx_assign(tx, TXG_WAIT);
         if (error != 0) {
@@ -125,12 +127,12 @@ fio_dmu_queue(struct thread_data *td, struct io_u *io_u) {
             td_verror(td, io_u->error, "xfer");
             return FIO_Q_COMPLETED;
         }
-        dmu_write(os, ZVOL_OBJ, io_u->offset, io_u->xfer_buflen, io_u->xfer_buf,
+        dmu_write(os[os_index], ZVOL_OBJ, io_u->offset, io_u->xfer_buflen, io_u->xfer_buf,
                   tx);
         dmu_tx_commit(tx);
         return FIO_Q_COMPLETED;
     } else if (io_u->ddir == DDIR_READ) {
-        error = dmu_read(os, ZVOL_OBJ, io_u->offset, io_u->xfer_buflen,
+        error = dmu_read(os[os_index], ZVOL_OBJ, io_u->offset, io_u->xfer_buflen,
                          io_u->xfer_buf, DMU_READ_NO_PREFETCH);
         if (error != 0) {
             io_u->error = error;
@@ -143,67 +145,88 @@ fio_dmu_queue(struct thread_data *td, struct io_u *io_u) {
     /*  NOT REACHED */
 }
 
-void
-print_stats(void *args) {
-
-//    for (;;) {
-//        system("clear");
-//        show_pool_stats(spa);
-//        sleep(1);
-//    }
-//
-    zk_thread_exit();
-}
-
-kthread_t *stats_thread;
-pthread_t tid;
-
 static int
 fio_dmu_init(struct thread_data *td) {
     int error = 0;
     struct dmu_opts *opts = td->eo;
     char *dsname, *c;
+    int i;
+    char poolname[MAXPATHLEN];
+    char osname[ZFS_MAX_DATASET_NAME_LEN + 1];
 
+    dsname = opts->pool;
     /*
      * when we run multiple process we need to prevent
      * multiple pool imports
      */
     pthread_mutex_lock(&init_mutex);
-    if (initialized != 0) {
-        printf("TID %d\n", td->thread_number);
-        pthread_mutex_unlock(&init_mutex);
-        return 0;
-    }
-
-    if (!opts->pool) {
-        fprintf(stderr, "No zfs pool name\n");
-        exit(1);
-    }
-
-    dsname = opts->pool;
 
     strncpy(poolname, dsname, sizeof(poolname));
     c = strchr(poolname, '/');
     if (c != NULL)
-	    *c = '\0';
-    spa = user_spa_open(poolname, B_FALSE, HOLD_TAG);
-    spa->spa_debug = 1;
+        *c = '\0';
+
+    for (i=0; i<10 && spa[i] != NULL; i++)
+    {
+        if(strcmp(spa[i]->spa_name, poolname) == 0)
+        {
+            initialized_spa[i]++;
+            td->io_ops_data = (struct dmu_data *)malloc(sizeof(struct dmu_data));
+            ((struct dmu_data *)(td->io_ops_data))->spa_index = i;
+	    goto hold_os;
+        }
+    }
+
+    if (i == 10) {
+        fprintf(stderr, "too many pools\n");
+        pthread_mutex_unlock(&init_mutex);
+        exit(1);
+    }
+
+    if (!opts->pool) {
+        fprintf(stderr, "No zfs pool name\n");
+        pthread_mutex_unlock(&init_mutex);
+        exit(1);
+    }
+
+    spa[i] = user_spa_open(poolname, B_FALSE, HOLD_TAG);
+    spa[i]->spa_debug = 1;
     
+    initialized_spa[i] = 1;
+    td->io_ops_data = (struct dmu_data *)malloc(sizeof(struct dmu_data));
+    ((struct dmu_data *)(td->io_ops_data))->spa_index = i;
+
+hold_os:
+    for (i=0; i<10 && os[i] != NULL; i++)
+    {
+        dmu_objset_name(os[i], osname);
+	if(strcmp(osname, dsname) == 0)
+        {
+            initialized_os[i]++;
+            ((struct dmu_data *)(td->io_ops_data))->os_index = i;
+	    goto end;
+        }
+    }
+
+    if (i == 10) {
+        fprintf(stderr, "too many datasets\n");
+        pthread_mutex_unlock(&init_mutex);
+        exit(1);
+    }
+
     if ((error = dmu_objset_own(dsname, DMU_OST_ZVOL, B_FALSE, HOLD_TAG,
-                                &os)) != 0) {
+                                &os[i])) != 0) {
 	printf("No dataset with name %s\n", dsname);
         pthread_mutex_unlock(&init_mutex);
         return 1;
     }
 
-    initialized = 1;
-    stats_thread =
-        zk_thread_create(NULL, 0, (thread_func_t)print_stats, NULL, 0, NULL,
-                         TS_RUN, 0, PTHREAD_CREATE_JOINABLE);
-    tid = stats_thread->t_tid;
+    initialized_os[i] = 1;
+    ((struct dmu_data *)(td->io_ops_data))->os_index = i;
+end:
     pthread_mutex_unlock(&init_mutex);
 
-    printf("Pool imported!\n");
+    printf("Pool imported %s %s! %d %d %d\n\n\n", dsname, td->o.name, i, td->thread_number, td->subjob_number);
     return 0;
 }
 
@@ -226,18 +249,21 @@ fio_dmu_open(struct thread_data *td, struct fio_file *f) {
 static int
 fio_dmu_close(struct thread_data *td, struct fio_file *f) {
     struct dmu_opts *opts = td->eo;
-
-    zk_thread_join(tid);
-
-    if (initialized != 0) {
+    int spa_index = (int)((struct dmu_data *)(td->io_ops_data))->spa_index;
+    int os_index = (int)((struct dmu_data *)(td->io_ops_data))->os_index;
+    pthread_mutex_lock(&init_mutex);
+    initialized_os[os_index]--;
+    if(initialized_os[os_index] == 0) {
          if (opts->kstats != 0) {
              kstat_dump_all();
          }
-         dmu_objset_disown(os, HOLD_TAG);
-         spa_close(spa, HOLD_TAG);
-         kernel_fini();
-         initialized = 0;
+        dmu_objset_disown(os[os_index], HOLD_TAG);
     }
+    initialized_spa[spa_index]--;
+    if(initialized_spa[spa_index] == 0)
+        spa_close(spa[spa_index], HOLD_TAG);
+    pthread_mutex_unlock(&init_mutex);
+    printf("closed %s %d %d\n", td->o.name, td->thread_number, td->subjob_number);
     return 0;
 }
 
