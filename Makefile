@@ -52,6 +52,39 @@ SOURCE :=	$(sort $(patsubst $(SRCDIR)/%,%,$(wildcard $(SRCDIR)/crc/*.c)) \
 		workqueue.c rate-submit.c optgroup.c helper_thread.c \
 		steadystate.c zone-dist.c
 
+ifdef CONFIG_ISTGT
+ISTGT_SRC_DIR = $(ISTGT)/src
+ISTGT_SOURCE = $(ISTGT_SRC_DIR)/istgt_log.c                     \
+               $(ISTGT_SRC_DIR)/istgt_sock.c                    \
+               $(ISTGT_SRC_DIR)/istgt_lu.c                      \
+               $(ISTGT_SRC_DIR)/istgt_iscsi.c                   \
+               $(ISTGT_SRC_DIR)/istgt_conf.c                    \
+               $(ISTGT_SRC_DIR)/istgt_misc.c                    \
+               $(ISTGT_SRC_DIR)/istgt_queue.c                   \
+               $(ISTGT_SRC_DIR)/istgt_lu_ctl.c                  \
+               $(ISTGT_SRC_DIR)/istgt_md5.c                     \
+               $(ISTGT_SRC_DIR)/istgt_iscsi_param.c             \
+               $(ISTGT_SRC_DIR)/istgt_cmd_table.c               \
+               $(ISTGT_SRC_DIR)/istgt_crc32c.c                  \
+               $(ISTGT_SRC_DIR)/istgt_ser_table.c               \
+               $(ISTGT_SRC_DIR)/istgt_lu_disk_xcopy.c           \
+               $(ISTGT_SRC_DIR)/istgt_lu_disk_vbox.c            \
+               $(ISTGT_SRC_DIR)/istgt_lu_disk.c                 \
+               $(ISTGT_SRC_DIR)/replication.c                   \
+               $(ISTGT_SRC_DIR)/replication_misc.c              \
+               $(ISTGT_SRC_DIR)/ring_mempool.c                  \
+               $(ISTGT_SRC_DIR)/rte_ring.c                      \
+               $(ISTGT_SRC_DIR)/data_conn.c
+
+CFLAGS += -DREPLICATION
+ifdef CONFIG_ISTGT_REPLICA
+CFLAGS += -DFIO_ISTGT_REPLICA
+endif
+SOURCE += $(ISTGT_SOURCE) engines/istgt_setup.c engines/istgt.c
+CFLAGS += -I$(ISTGT)/src -fPIC -DFIO_ISTGT
+LIBS += -lcrypto -lpthread  -lm -ljson-c
+endif
+
 ifdef CONFIG_LIBHDFS
   HDFSFLAGS= -I $(JAVA_HOME)/include -I $(JAVA_HOME)/include/linux -I $(FIO_LIBHDFS_INCLUDE)
   HDFSLIB= -Wl,-rpath $(JAVA_HOME)/jre/lib/$(FIO_HDFS_CPU)/server -L$(JAVA_HOME)/jre/lib/$(FIO_HDFS_CPU)/server $(FIO_LIBHDFS_LIB)/libhdfs.a -ljvm
@@ -336,6 +369,7 @@ all: $(PROGS) $(T_TEST_PROGS) $(SCRIPTS) FORCE
 
 FIO-VERSION-FILE: FORCE
 	@$(SHELL) $(SRCDIR)/FIO-VERSION-GEN
+	./patch_istgt.sh $(ISTGT)
 -include FIO-VERSION-FILE
 
 override CFLAGS += -DFIO_VERSION='"$(FIO_VERSION)"'

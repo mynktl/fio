@@ -23,6 +23,12 @@
  */
 #include "fio.h"
 
+#ifdef FIO_ISTGT
+extern void fio_istgt_stop(struct thread_data *td);
+extern int fio_istgt_start(struct thread_data *td);
+extern void fio_wait_for_spec_ready();
+#endif
+
 int main(int argc, char *argv[], char *envp[])
 {
 	int ret = 1;
@@ -48,6 +54,13 @@ int main(int argc, char *argv[], char *envp[])
 	 */
 	setvbuf(stdout, NULL, _IOLBF, 0);
 
+#ifdef FIO_ISTGT
+	fio_istgt_start(NULL);
+#ifdef FIO_ISTGT_REPLICA
+	fio_wait_for_spec_ready();
+#endif
+#endif
+
 	fio_time_init();
 
 	if (nr_clients) {
@@ -62,6 +75,9 @@ int main(int argc, char *argv[], char *envp[])
 done_key:
 	fio_server_destroy_sk_key();
 done:
+#ifdef FIO_ISTGT
+	fio_istgt_stop(NULL);
+#endif
 	deinitialize_fio();
 	return ret;
 }

@@ -135,6 +135,8 @@ output_sym() {
 
 targetos=""
 cpu=""
+istgt=""
+istgt_replica=""
 
 # default options
 show_help="no"
@@ -204,6 +206,10 @@ for opt do
   ;;
   --with-ime=*) ime_path="$optarg"
   ;;
+  --with-istgt=*) istgt="$optarg"
+  ;;
+  --enable-istgt-replica=*) istgt_replica="$optarg"
+  ;;
   --help)
     show_help="yes"
     ;;
@@ -239,6 +245,8 @@ if test "$show_help" = "yes" ; then
   echo "--enable-cuda           Enable GPUDirect RDMA support"
   echo "--disable-native        Don't build for native host"
   echo "--with-ime=             Install path for DDN's Infinite Memory Engine"
+  echo "--with-istgt            Path to openebs istgt repo (../istgt) (for istgt engine)"
+  echo "--enable-istgt-replica    Enable replica connection (if false then it will not send command to replica"
   exit $exit_val
 fi
 
@@ -550,6 +558,18 @@ else
   fatal "Unknown wordsize"
 fi
 print_config "Wordsize" "$wordsize"
+#########################################
+# check istgt(https://github.com/openebs/istgt) support
+if test ! -z "$istgt" ; then
+  if test ! -d "$istgt"; then
+    fatal "Invalid path to openebs istgt repo"
+  fi
+  echo "CONFIG_ISTGT=Y" >> $config_host_mak
+  echo "ISTGT=$istgt" >> $config_host_mak
+  if test ! -z "$istgt_replica"; then
+          echo "CONFIG_ISTGT_REPLICA=Y" >> $config_host_mak
+  fi
+fi
 
 ##########################################
 # zlib probe

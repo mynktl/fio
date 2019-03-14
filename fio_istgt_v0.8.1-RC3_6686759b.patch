@@ -1,0 +1,196 @@
+diff --git a/src/istgt_iscsi.c b/src/istgt_iscsi.c
+index 2dd3bf4..1e8feed 100644
+--- a/src/istgt_iscsi.c
++++ b/src/istgt_iscsi.c
+@@ -136,7 +136,11 @@ struct istgt_detail {
+ 
+ static int g_nconns;
+ static int g_max_connidx;
++#ifdef FIO_ISTGT
++CONN_Ptr *g_conns;
++#else
+ static CONN_Ptr *g_conns;
++#endif
+ static pthread_mutex_t g_conns_mutex;
+ 
+ static uint16_t g_last_tsih;
+@@ -3375,7 +3379,11 @@ timediff(ISTGT_LU_CMD_Ptr p, char  ch, uint16_t line)
+ 	}
+ }
+ 
++#ifdef	FIO_ISTGT
++int
++#else
+ static int
++#endif
+ istgt_iscsi_op_scsi(CONN_Ptr conn, ISCSI_PDU_Ptr pdu)
+ {
+ 	int istgt_state, lunum;
+@@ -6349,6 +6357,9 @@ istgt_create_conn(ISTGT_Ptr istgt, PORTAL_Ptr portal, int sock, struct sockaddr
+ 	CONN_Ptr conn;
+ 	int rc;
+ 	int i;
++#ifdef	FIO_ISTGT
++	int connid = -1;
++#endif
+ 
+ 	conn = xmalloc(sizeof (*conn));
+ 	memset(conn, 0, sizeof (*conn));
+@@ -6427,20 +6438,24 @@ istgt_create_conn(ISTGT_Ptr istgt, PORTAL_Ptr portal, int sock, struct sockaddr
+ 		rc = istgt_getaddr(sock, conn->target_addr,
+ 			sizeof (conn->target_addr),
+ 			conn->initiator_addr, sizeof (conn->initiator_addr), &conn->iaddr, &conn->iport);
++#ifndef	FIO_ISTGT
+ 		if (rc < 0) {
+ 			ISTGT_ERRLOG("istgt_getaddr() failed\n");
+ 			goto error_return;
+ 		}
++#endif
+ 		break;
+ 	case AF_INET:
+ 		conn->initiator_family = AF_INET;
+ 		rc = istgt_getaddr(sock, conn->target_addr,
+ 			sizeof (conn->target_addr),
+ 			conn->initiator_addr, sizeof (conn->initiator_addr), &conn->iaddr, &conn->iport);
++#if 0
+ 		if (rc < 0) {
+ 			ISTGT_ERRLOG("istgt_getaddr() failed\n");
+ 			goto error_return;
+ 		}
++#endif
+ 		break;
+ 	default:
+ 		ISTGT_ERRLOG("unsupported family\n");
+@@ -6476,6 +6491,7 @@ istgt_create_conn(ISTGT_Ptr istgt, PORTAL_Ptr portal, int sock, struct sockaddr
+ 	// memset(conn->initiator_port, 0, sizeof (conn->initiator_port));
+ 	// memset(conn->target_port, 0, sizeof (conn->target_port));
+ 
++#ifndef	FIO_ISTGT
+ 	/* set timeout msec. */
+ 	rc = istgt_set_recvtimeout(conn->sock, conn->timeout * 1000);
+ 	if (rc != 0) {
+@@ -6487,6 +6503,7 @@ istgt_create_conn(ISTGT_Ptr istgt, PORTAL_Ptr portal, int sock, struct sockaddr
+ 		ISTGT_ERRLOG("istgt_set_sendtimeo() failed\n");
+ 		goto error_return;
+ 	}
++#endif
+ 
+ 	rc = pipe(conn->task_pipe);
+ 	if (rc != 0) {
+@@ -6580,6 +6597,9 @@ istgt_create_conn(ISTGT_Ptr istgt, PORTAL_Ptr portal, int sock, struct sockaddr
+ 		if (g_conns[i] == NULL) {
+ 			g_conns[i] = conn;
+ 			conn->id = i;
++#ifdef	FIO_ISTGT
++			connid = i;
++#endif
+ 			if (i > g_max_connidx)
+ 				g_max_connidx++;
+ 			rc = 0;
+@@ -6619,7 +6639,11 @@ istgt_create_conn(ISTGT_Ptr istgt, PORTAL_Ptr portal, int sock, struct sockaddr
+ 		ISTGT_ERRLOG("pthread_detach() failed\n");
+ 		goto error_return;
+ 	}
++#ifdef	FIO_ISTGT
++	return (connid);
++#else
+ 	return (0);
++#endif
+ }
+ 
+ int
+diff --git a/src/istgt_lu.c b/src/istgt_lu.c
+index 900091e..fdb9c81 100644
+--- a/src/istgt_lu.c
++++ b/src/istgt_lu.c
+@@ -3785,6 +3785,9 @@ istgt_lu_create_task(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd, int lun, ISTGT_LU_D
+ 	src_pdu->ahs = NULL;
+ 	src_pdu->total_ahs_len = 0;
+ 
++#ifdef	FIO_ISTGT
++	dst_pdu->dummy = src_pdu->dummy;
++#endif
+ 
+ 	/* copy other lu_cmd */
+ 	lu_task->lu_cmd.lu = lu_cmd->lu;
+diff --git a/src/istgt_lu_disk.c b/src/istgt_lu_disk.c
+index dbc70b2..efdaff7 100644
+--- a/src/istgt_lu_disk.c
++++ b/src/istgt_lu_disk.c
+@@ -90,6 +90,7 @@ extern clockid_t clockid;
+ //#define ISTGT_TRACE_DISK
+ 
+ #ifdef	REPLICATION
++#ifdef	CONFIG_ISTGT_REPLICA
+ #define	IS_SPEC_BUSY(_spec)						\
+ 		(_spec->state == ISTGT_LUN_BUSY ||			\
+ 		    _spec->ready == false)
+@@ -97,6 +98,10 @@ extern clockid_t clockid;
+ #define	IS_SPEC_BUSY(_spec)	\
+ 		(_spec->state == ISTGT_LUN_BUSY)
+ #endif
++#else
++#define	IS_SPEC_BUSY(_spec)	\
++		(_spec->state == ISTGT_LUN_BUSY)
++#endif
+ 
+ #define MAX_DIO_WAIT 30   //loop for 30 seconds
+ //#define enterblockingcall(lu_cmd, conn)
+@@ -9149,7 +9154,9 @@ istgt_lu_disk_execute(CONN_Ptr conn, ISTGT_LU_CMD_Ptr lu_cmd)
+ 	MTX_LOCK(&spec->state_mutex);
+ 	if ((spec->state == ISTGT_LUN_BUSY && (!istgt_lu_disk_busy_excused(cdb[0])))
+ #ifdef	REPLICATION
++#ifdef	CONFIG_ISTGT_REPLICA=Y
+ 	    || !spec->ready
++#endif
+ #endif
+ 	    ) {
+ 		lu_cmd->data_len  = 0;
+diff --git a/src/replication.c b/src/replication.c
+index b843611..88275af 100644
+--- a/src/replication.c
++++ b/src/replication.c
+@@ -2750,6 +2750,15 @@ replicate(ISTGT_LU_DISK *spec, ISTGT_LU_CMD_Ptr cmd, uint64_t offset, uint64_t n
+ 	(void) cmd_read;
+ 	CHECK_IO_TYPE(cmd, cmd_read, cmd_write, cmd_sync);
+ 
++#ifndef	FIO_ISTGT_REPLICA
++	if (cmd_read) {
++		cmd->data = malloc(nbytes);
++		cmd->data_len = nbytes;
++		return cmd->data_len;
++	}
++	return 0;
++#endif
++
+ again:
+ 	MTX_LOCK(&spec->rq_mtx);
+ 	if(spec->ready == false) {
+diff --git a/src/replication.h b/src/replication.h
+index 2199ae7..593224e 100644
+--- a/src/replication.h
++++ b/src/replication.h
+@@ -158,7 +158,11 @@ typedef struct mgmt_cmd_s {
+ 	rcommon_mgmt_cmd_t *rcomm_mgmt;
+ } mgmt_cmd_t;
+ 
++#ifdef	FIO_ISTGT
++typedef struct io_event_fio {
++#else
+ typedef struct io_event {
++#endif
+ 	int fd;
+ 	int *state;
+ 	zvol_io_hdr_t *io_hdr;
+diff --git a/src/replication_log.h b/src/replication_log.h
+index 37a4a7d..012166c 100644
+--- a/src/replication_log.h
++++ b/src/replication_log.h
+@@ -1,6 +1,7 @@
+ #ifndef	REPLICATION_LOG_H
+ #define	REPLICATION_LOG_H
+ 
++#include <stdio.h>
+ #include <sys/time.h>
+ #include <time.h>
+ 

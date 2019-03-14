@@ -1,0 +1,44 @@
+Overview
+------------------
+
+Fio ISTGT engine is written for git@github.com:openebs/istgt.git.
+
+ISTGT engine creates a PDU for READ/WRITE and queue it to ISTGT
+through istgt_iscsi_op_scsi API. Completed IO will be handled
+through fio .getevents API.
+
+Compilation
+------
+1. Clone ISTGT code from git@github.com:openebs/istgt.git.
+    git clone git@github.com:openebs/istgt.git.
+
+2. Checkout version 0.8.1 in ISTGT code.
+    git checkout 0.8.1
+
+   As of now, istgt engine of fio supports istgt version
+0.8.1 (commit:39771ce57e3efa8e708fcdedc43459756686759b).
+
+3. Checkout `istgt` branch in fio code.
+
+4. Configure fio for ISTGT engine using
+    ./configure --with-istgt=ISTGT_DIRECTORY(relative path)
+
+   By default, ISTGT will not send the command to the replica. It will be
+returned by `replicate` API.
+
+   If you want to connect replica to ISTGT then configure fio using
+    ./configure --with-istgt=ISTGT_DIRECTORY(relative path) --enable-istgt-replica=yes
+
+5. Build fio with
+    make
+
+   make will apply a patch(fio_istgt_v0.8.1-RC3_6686759b.patch) to ISTGT
+code. This patch will modify ISTGT code to use it in fio.
+
+Run
+........
+1. To use ISTGT engine in fio, use `ioengine=istgt` in fio conf file.
+
+2. Before starting fio, set environment variable `externalIP`.
+    export externalIP="127.0.0.1"
+
