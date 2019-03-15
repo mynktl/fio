@@ -113,6 +113,20 @@ index 900091e..fdb9c81 100644
  
  	/* copy other lu_cmd */
  	lu_task->lu_cmd.lu = lu_cmd->lu;
+diff --git a/src/istgt_lu.h b/src/istgt_lu.h
+index f29c983..87ee256 100644
+--- a/src/istgt_lu.h
++++ b/src/istgt_lu.h
+@@ -940,6 +940,9 @@ typedef struct istgt_lu_disk_t {
+ 	uint64_t io_seq;
+ #ifdef	REPLICATION
+ 	int quiesce;
++#ifdef	FIO_ISTGT
++	pthread_t cleanup_thread;
++#endif
+ #endif
+ 
+ 	/* entry */
 diff --git a/src/istgt_lu_disk.c b/src/istgt_lu_disk.c
 index dbc70b2..efdaff7 100644
 --- a/src/istgt_lu_disk.c
@@ -147,10 +161,10 @@ index dbc70b2..efdaff7 100644
  	    ) {
  		lu_cmd->data_len  = 0;
 diff --git a/src/replication.c b/src/replication.c
-index b843611..88275af 100644
+index b843611..96d908d 100644
 --- a/src/replication.c
 +++ b/src/replication.c
-@@ -2750,6 +2750,15 @@ replicate(ISTGT_LU_DISK *spec, ISTGT_LU_CMD_Ptr cmd, uint64_t offset, uint64_t n
+@@ -2750,6 +2750,27 @@ replicate(ISTGT_LU_DISK *spec, ISTGT_LU_CMD_Ptr cmd, uint64_t offset, uint64_t n
  	(void) cmd_read;
  	CHECK_IO_TYPE(cmd, cmd_read, cmd_write, cmd_sync);
  
@@ -159,6 +173,18 @@ index b843611..88275af 100644
 +		cmd->data = malloc(nbytes);
 +		cmd->data_len = nbytes;
 +		return cmd->data_len;
++	} else if (cmd_write) {
++		if (cmd->iobufindx != -1) {
++			for (i = 0; i < cmd->iobufindx + 1; ++i) {
++				if (cmd->iobuf[i].iov_base) {
++					xfree(cmd->iobuf[i].iov_base);
++					cmd->iobuf[i].iov_base = NULL;
++					cmd->iobuf[i].iov_len = 0;
++				}
++			}
++			cmd->iobufindx = -1;
++			cmd->iobufsize = 0;
++		}
 +	}
 +	return 0;
 +#endif
@@ -166,6 +192,49 @@ index b843611..88275af 100644
  again:
  	MTX_LOCK(&spec->rq_mtx);
  	if(spec->ready == false) {
+@@ -3315,6 +3336,12 @@ initialize_replication()
+ void
+ destroy_volume(spec_t *spec)
+ {
++
++#ifdef	FIO_ISTGT
++	pthread_join(spec->cleanup_thread, NULL);
++	spec->cleanup_thread = NULL;
++#endif
++
+ 	ASSERT0(get_num_entries_from_mempool(&spec->rcommon_deadlist));
+ 	destroy_mempool(&spec->rcommon_deadlist);
+ 
+@@ -3372,8 +3399,13 @@ initialize_volume(spec_t *spec, int replication_factor, int consistency_factor)
+ 		return -1;
+ 	}
+ 
++#ifndef	FIO_ISTGT
+ 	rc = pthread_create(&deadlist_cleanup_thread, NULL, &cleanup_deadlist,
+ 			(void *)spec);
++#else
++	rc = pthread_create(&spec->cleanup_thread, NULL, &cleanup_deadlist,
++			(void *)spec);
++#endif
+ 	if (rc != 0) {
+ 		REPLICA_ERRLOG("pthread_create(replicator_thread) failed "
+ 		    "err(%d)\n", rc);
+@@ -3499,6 +3531,15 @@ cleanup_deadlist(void *arg)
+ 			entry_count--;
+ 		}
+ 		sleep(1);	//add predefined time here
++
++#ifdef	FIO_ISTGT
++		MTX_LOCK(&spec->state_mutex);
++		if (spec->ex_state == ISTGT_LUN_CLOSE) {
++			MTX_UNLOCK(&spec->state_mutex);
++			break;
++		}
++		MTX_UNLOCK(&spec->state_mutex);
++#endif
+ 	}
+ 	return (NULL);
+ }
 diff --git a/src/replication.h b/src/replication.h
 index 2199ae7..593224e 100644
 --- a/src/replication.h

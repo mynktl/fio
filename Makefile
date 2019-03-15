@@ -369,7 +369,7 @@ all: $(PROGS) $(T_TEST_PROGS) $(SCRIPTS) FORCE
 
 FIO-VERSION-FILE: FORCE
 	@$(SHELL) $(SRCDIR)/FIO-VERSION-GEN
-	./patch_istgt.sh $(ISTGT)
+	@./patch_istgt.sh $(ISTGT)
 -include FIO-VERSION-FILE
 
 override CFLAGS += -DFIO_VERSION='"$(FIO_VERSION)"'
@@ -505,6 +505,7 @@ t/time-test: $(T_TT_OBJS)
 	$(QUIET_LINK)$(CC) $(LDFLAGS) $(CFLAGS) -o $@ $(T_TT_OBJS) $(LIBS)
 
 clean: FORCE
+	@./cleanup_istgt.sh
 	@rm -f .depend $(FIO_OBJS) $(GFIO_OBJS) $(OBJS) $(T_OBJS) $(PROGS) $(T_PROGS) $(T_TEST_PROGS) core.* core gfio FIO-VERSION-FILE *.[do] lib/*.d oslib/*.[do] crc/*.d engines/*.[do] profiles/*.[do] t/*.[do] config-host.mak config-host.h y.tab.[ch] lex.yy.c exp/*.[do] lexer.h
 	@rm -rf  doc/output
 
