@@ -38,7 +38,6 @@
 #include <math.h>
 
 #include "fio.h"
-#include "sys/zfs_context.h"
 #ifndef FIO_NO_HAVE_SHM_H
 #include <sys/shm.h>
 #endif
@@ -1860,8 +1859,8 @@ err:
 	check_update_rusage(td);
 
 	sk_out_drop();
-	if (td->o.use_thread)
-		zk_thread_exit();
+//	if (td->o.use_thread)
+//		zk_thread_exit();
 	return (void *) (uintptr_t) td->error;
 }
 
@@ -2122,7 +2121,7 @@ static void run_threads(struct sk_out *sk_out)
 	unsigned int i, todo, nr_running, nr_started;
 	uint64_t m_rate, t_rate;
 	uint64_t spent;
-	kthread_t *kt;
+//	kthread_t *kt;
 
 	if (fio_gtod_offload && fio_start_gtod_thread())
 		return;
@@ -2266,16 +2265,17 @@ reap:
 				int ret;
 
 				dprint(FD_PROCESS, "will pthread_create\n");
-				kt = zk_thread_create(NULL, 0, (thread_func_t )thread_main,
-						fd, 0, NULL, TS_RUN, 0, PTHREAD_CREATE_DETACHED);
-//				ret = pthread_create(&td->thread, NULL,
-//							thread_main, fd);
-				if (kt == NULL) {
+				ret = pthread_create(&td->thread, NULL,
+							thread_main, fd);
+				if (ret) {
 					log_err("pthread_create:\n");
 					free(fd);
 					nr_started--;
 					break;
 				}
+				ret = pthread_detach(td->thread);
+				if (ret)
+					log_err("pthread_detach: %s", strerror(ret));
 			} else {
 				pid_t pid;
 				dprint(FD_PROCESS, "will fork\n");

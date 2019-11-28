@@ -50,25 +50,40 @@ SOURCE :=	$(sort $(patsubst $(SRCDIR)/%,%,$(wildcard $(SRCDIR)/crc/*.c)) \
 		workqueue.c rate-submit.c optgroup.c helper_thread.c \
 		steadystate.c
 
-ifdef CONFIG_ZFS
-ifdef ZFSONLINUX
-  ZFSFLAGS += -I$(ZFSONLINUX)/include -I$(ZFSONLINUX)/lib/libspl/include
-  ZFSLIB += -L$(ZFSONLINUX)/lib/libnvpair/.libs -L$(ZFSONLINUX)/lib/libuutil/.libs -L$(ZFSONLINUX)/lib/libzpool/.libs -L$(ZFSONLINUX)/lib/libzfs/.libs -L$(ZFSONLINUX)/lib/libzfs_core/.libs
-  ZFSLIB += -Wl,-rpath,"$(ZFSONLINUX)/lib/libnvpair/.libs" -Wl,-rpath,"$(ZFSONLINUX)/lib/libuutil/.libs" -Wl,-rpath,"$(ZFSONLINUX)/lib/libzpool/.libs" -Wl,-rpath,"$(ZFSONLINUX)/lib/libzfs/.libs" -Wl,-rpath,"$(ZFSONLINUX)/lib/libzfs_core/.libs"
-else
-  ZFSFLAGS += -I/usr/include/libzfs -I/usr/include/libspl
-endif
-  ZFSLIB += -lzfs -lzpool -lnvpair -luutil
-  CFLAGS += $(ZFSFLAGS)
-  LIBS += $(ZFSLIB)
-  SOURCE += engines/dmu.c
-endif
+#ISTGT_SOURCE_DIR = /home/mayank/work/dustbin/istgt_current/wor/istgt_build/src
+ISTGT_SOURCE_DIR = ../istgt_current/wor/istgt_build/src/
+ZFSFLAGS += -I$(ISTGT_SOURCE_DIR) -fPIC
+ISTGT_SOURCE = $(ISTGT_SOURCE_DIR)/istgt_log.c			\
+	       $(ISTGT_SOURCE_DIR)/istgt_sock.c			\
+	       $(ISTGT_SOURCE_DIR)/istgt_lu.c			\
+	       $(ISTGT_SOURCE_DIR)/istgt_iscsi.c		\
+	       $(ISTGT_SOURCE_DIR)/istgt_conf.c			\
+	       $(ISTGT_SOURCE_DIR)/replication.c		\
+	       $(ISTGT_SOURCE_DIR)/data_conn.c			\
+	       $(ISTGT_SOURCE_DIR)/istgt_misc.c			\
+	       $(ISTGT_SOURCE_DIR)/ring_mempool.c		\
+	       $(ISTGT_SOURCE_DIR)/istgt_queue.c		\
+	       $(ISTGT_SOURCE_DIR)/istgt_lu_ctl.c		\
+	       $(ISTGT_SOURCE_DIR)/istgt_md5.c			\
+	       $(ISTGT_SOURCE_DIR)/replication_misc.c		\
+	       $(ISTGT_SOURCE_DIR)/istgt_iscsi_param.c		\
+	       $(ISTGT_SOURCE_DIR)/istgt_cmd_table.c		\
+	       $(ISTGT_SOURCE_DIR)/istgt_crc32c.c		\
+	       $(ISTGT_SOURCE_DIR)/istgt_ser_table.c		\
+	       $(ISTGT_SOURCE_DIR)/istgt_lu_disk_xcopy.c	\
+	       $(ISTGT_SOURCE_DIR)/rte_ring.c			\
+	       $(ISTGT_SOURCE_DIR)/istgt_lu_disk_vbox.c		\
+	       $(ISTGT_SOURCE_DIR)/istgt_lu_disk.c
+
+SOURCE += $(ISTGT_SOURCE) engines/istgt_s.c engines/istgt.c
+CFLAGS += $(ZFSFLAGS) -DREPLICATION
+LIBS += -lcrypto -lpthread  -lm -ljson-c
 
 ifdef CONFIG_LIBHDFS
   HDFSFLAGS= -I $(JAVA_HOME)/include -I $(JAVA_HOME)/include/linux -I $(FIO_LIBHDFS_INCLUDE)
   HDFSLIB= -Wl,-rpath $(JAVA_HOME)/jre/lib/$(FIO_HDFS_CPU)/server -L$(JAVA_HOME)/jre/lib/$(FIO_HDFS_CPU)/server -ljvm $(FIO_LIBHDFS_LIB)/libhdfs.a
   CFLAGS += $(HDFSFLAGS)
-  SOURCE += engines/libhdfs.c
+  SOURCE += engines/libhdfs.c 
 endif
 
 ifdef CONFIG_64BIT_LLP64

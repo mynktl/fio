@@ -27,7 +27,10 @@
 
 #include "fio.h"
 #include "smalloc.h"
-#include "sys/zfs_context.h"
+
+extern void fio_istgt_stop(struct thread_data *td);
+extern int fio_istgt_start(struct thread_data *td);
+extern int fio_istgt_create_conn();
 
 int main(int argc, char *argv[], char *envp[])
 {
@@ -42,7 +45,9 @@ int main(int argc, char *argv[], char *envp[])
 #error "No available clock source!"
 #endif
 
-	kernel_init(FREAD | FWRITE);
+	fio_istgt_start(NULL);
+	if (fio_istgt_create_conn())
+		return 1;
 
 	if (fio_server_create_sk_key())
 		goto done;
@@ -67,10 +72,10 @@ int main(int argc, char *argv[], char *envp[])
 	} else
 		ret = fio_backend(NULL);
 
-	kernel_fini();
 done_key:
 	fio_server_destroy_sk_key();
 done:
+	fio_istgt_stop(NULL);
 	deinitialize_fio();
 	return ret;
 }
